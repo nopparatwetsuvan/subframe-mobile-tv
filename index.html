@@ -177,6 +177,16 @@
       }, 650);
     }
 
+    function scheduleNextListen(delayMs = 500) {
+      clearTimeout(restartTimer);
+      if (!listening) return;
+      restartTimer = setTimeout(() => {
+        if (listening && !isActive) {
+          startOnce();
+        }
+      }, delayMs);
+    }
+
     function buildRecognizer() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) return null;
@@ -220,13 +230,28 @@
 
       rec.onerror = (e) => {
         isActive = false;
+        if (e.error === "no-speech") {
+          micBadgeEl.textContent = "รอพูดต่อ";
+          statusEl.classList.remove("err");
+          statusEl.textContent = "ยังไม่ได้ยินเสียงพูด — รอฟังต่ออัตโนมัติ...";
+          scheduleNextListen(500);
+          syncButtons();
+          return;
+        }
+
         addLog(`Mic error: ${e.error}`, true);
-        if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "aborted") {
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
           listening = false;
           clearTimeout(restartTimer);
-          micBadgeEl.textContent = "หยุดแล้ว";
+          micBadgeEl.textContent = "ไมค์ถูกบล็อก";
           statusEl.classList.add("err");
-          statusEl.textContent = "ไมค์หยุดทำงาน — กด 'เริ่มฟังเสียง' อีกครั้ง";
+          statusEl.textContent = "กรุณาอนุญาตการใช้ไมโครโฟนในเบราว์เซอร์";
+        } else if (e.error === "aborted") {
+          listening = false;
+          clearTimeout(restartTimer);
+          micBadgeEl.textContent = "ถูกยกเลิก";
+          statusEl.classList.add("err");
+          statusEl.textContent = "การจับเสียงถูกยกเลิก — กด 'เริ่มฟังเสียง' อีกครั้ง";
         }
         syncButtons();
       };
@@ -239,12 +264,7 @@
           statusEl.textContent = "หยุดฟังเสียงแล้ว";
           return;
         }
-        clearTimeout(restartTimer);
-        restartTimer = setTimeout(() => {
-          if (listening && !isActive) {
-            startOnce();
-          }
-        }, 400);
+        scheduleNextListen(450);
       };
 
       return rec;
