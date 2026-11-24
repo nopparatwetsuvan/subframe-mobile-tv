@@ -44,6 +44,7 @@
       font-weight: 600;
       cursor: pointer;
     }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
     #btnMic { background: #336359; color: #fff; }
     #btnStop { background: #334155; color: #e2e8f0; }
     #btnClear { background: #1e293b; color: #cbd5e1; }
@@ -79,7 +80,7 @@
 
     <div class="row">
       <button id="btnMic">เริ่มฟังเสียง (en-US)</button>
-      <button id="btnStop">หยุดฟัง</button>
+      <button id="btnStop" disabled>หยุดฟัง</button>
       <button id="btnClear">ล้างกล่อง</button>
     </div>
 
@@ -101,6 +102,8 @@
 
   <script>
     const tvIpEl = document.getElementById("tvIp");
+    const btnMicEl = document.getElementById("btnMic");
+    const btnStopEl = document.getElementById("btnStop");
     const chkAutoEl = document.getElementById("chkAuto");
     const micBadgeEl = document.getElementById("micBadge");
     const statusEl = document.getElementById("status");
@@ -114,11 +117,16 @@
 
     let recognition = null;
     let listening = false;
-    let isStarting = false;
+    let isActive = false;
     let restartTimer = null;
     let committedText = "";
     let lastSentText = "";
     let debounceTimer = null;
+
+    function syncButtons() {
+      btnMicEl.disabled = listening || isActive;
+      btnStopEl.disabled = !listening && !isActive;
+    }
 
     function addLog(msg, isErr = false) {
       const t = new Date().toLocaleTimeString("th-TH");
@@ -169,7 +177,7 @@
       }, 650);
     }
 
-    function createRecognizer() {
+    function buildRecognizer() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) return null;
 
@@ -179,7 +187,8 @@
       rec.continuous = false;
 
       rec.onstart = () => {
-        isStarting = false;
+        isActive = true;
+        syncButtons();
         micBadgeEl.textContent = "กำลังฟัง";
         statusEl.classList.remove("err");
         statusEl.textContent = "กำลังฟังเสียงภาษาอังกฤษ (en-US)... พูดได้เลย";
@@ -210,25 +219,21 @@
       };
 
       rec.onerror = (e) => {
-        isStarting = false;
+        isActive = false;
         addLog(`Mic error: ${e.error}`, true);
-        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "aborted") {
           listening = false;
           clearTimeout(restartTimer);
-          micBadgeEl.textContent = "ไมค์ถูกบล็อก";
+          micBadgeEl.textContent = "หยุดแล้ว";
           statusEl.classList.add("err");
-          statusEl.textContent = "กรุณาอนุญาตการใช้ไมโครโฟนในเบราว์เซอร์";
-        } else if (e.error === "aborted") {
-          listening = false;
-          clearTimeout(restartTimer);
-          micBadgeEl.textContent = "ถูกยกเลิก";
-          statusEl.classList.add("err");
-          statusEl.textContent = "การจับเสียงถูกยกเลิก — กด 'เริ่มฟังเสียง' อีกครั้ง";
+          statusEl.textContent = "ไมค์หยุดทำงาน — กด 'เริ่มฟังเสียง' อีกครั้ง";
         }
+        syncButtons();
       };
 
       rec.onend = () => {
-        isStarting = false;
+        isActive = false;
+        syncButtons();
         if (!listening) {
           micBadgeEl.textContent = "หยุดแล้ว";
           statusEl.textContent = "หยุดฟังเสียงแล้ว";
@@ -236,58 +241,61 @@
         }
         clearTimeout(restartTimer);
         restartTimer = setTimeout(() => {
-          if (listening && !isStarting) {
-            safeStart(rec);
+          if (listening && !isActive) {
+            startOnce();
           }
-        }, 350);
+        }, 400);
       };
 
       return rec;
     }
 
-    function safeStart(rec) {
-      if (!rec || isStarting) return;
-      isStarting = true;
+    function startOnce() {
+      if (isActive) return;
+      recognition = buildRecognizer();
+      if (!recognition) {
+        listening = false;
+        syncButtons();
+        statusEl.classList.add("err");
+        statusEl.textContent = "เบราว์เซอร์นี้ไม่รองรับ SpeechRecognition บนเว็บ";
+        return;
+      }
+      isActive = true;
+      syncButtons();
       try {
-        rec.start();
+        recognition.start();
       } catch (e) {
-        isStarting = false;
+        isActive = false;
+        listening = false;
+        syncButtons();
         addLog("เริ่มไมค์ไม่ได้: " + (e.message || e), true);
       }
     }
 
     function startMic() {
-      if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
-        statusEl.classList.add("err");
-        statusEl.textContent = "เบราว์เซอร์นี้ไม่รองรับ SpeechRecognition บนเว็บ";
-        addLog("ไม่รองรับ SpeechRecognition", true);
-        return;
-      }
-
+      if (listening || isActive) return;
       clearTimeout(restartTimer);
       listening = true;
-
-      if (!recognition) {
-        recognition = createRecognizer();
-      }
+      syncButtons();
       addLog("กดเริ่มฟังเสียงภาษาอังกฤษแล้ว");
-      safeStart(recognition);
+      startOnce();
     }
 
     function stopMic() {
       listening = false;
-      isStarting = false;
       clearTimeout(restartTimer);
       clearTimeout(debounceTimer);
       if (recognition) {
-        try { recognition.stop(); } catch (_) {}
+        try { recognition.abort(); } catch (_) {}
       }
+      isActive = false;
+      syncButtons();
       micBadgeEl.textContent = "หยุดแล้ว";
       statusEl.textContent = "หยุดฟังเสียงแล้ว";
     }
 
-    document.getElementById("btnMic").addEventListener("click", startMic);
-    document.getElementById("btnStop").addEventListener("click", stopMic);
+    btnMicEl.addEventListener("click", startMic);
+    btnStopEl.addEventListener("click", stopMic);
     document.getElementById("btnClear").addEventListener("click", () => {
       committedText = "";
       lastSentText = "";
